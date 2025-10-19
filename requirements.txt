@@ -1,0 +1,8 @@
+requests
+xmltodict
+watchdog
+tencentcloud-sdk-python
+cos-python-sdk-v5
+fastapi
+uvicorn[standard]
+python-multipart
