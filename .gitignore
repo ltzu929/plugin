@@ -1,0 +1,19 @@
+# 配置文件
+config.ini
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 虚拟环境
+.venv/
+venv/
+ENV/
+
+# IDE 配置文件
+.idea/
+*.swp
+*.swo
+*~

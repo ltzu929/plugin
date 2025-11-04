@@ -1,0 +1,9 @@
+[TencentCloud]
+SecretId = YOUR_SECRET_ID
+SecretKey = YOUR_SECRET_KEY
+Region = ap-guangzhou
+Bucket = YOUR_BUCKET_NAME
+
+[Watch]
+WatchPath = C:\path\to\your\audio\folder
+AudioFormats = .mp3,.wav,.m4a,.flac,.aac,mp4

@@ -33,10 +33,9 @@
 .
 ├── main.py         # 主程序入口，同时启动Web服务器和音频监控服务
 ├── danmu.py        # Bilibili 弹幕获取与分析模块
-├── audio-text.py   # 音频转字幕模块
+├── audio_text.py   # 音频转字幕模块
 ├── config.ini      # 配置文件，需要您手动创建和填写
 ├── requirements.txt# 项目依赖文件
-├── frontend/       # 前端Vue项目目录
 └── readme.md       # 本说明文件
 ```
 
@@ -58,7 +57,7 @@ Bucket = YOUR_BUCKET_NAME
 
 [Watch]
 # 需要监控的本地文件夹路径，请使用绝对路径，例如：D:\audios
-WatchPath = D:\alldata\str
+WatchPath = C:\path\to\your\audio\folder
 # 支持的音频文件格式，用逗号分隔
 AudioFormats = .mp3,.wav,.m4a,.flac,.aac
 ```
