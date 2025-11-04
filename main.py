@@ -2,6 +2,8 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from danmu import main_analysis
 import logging
+from multiprocessing import Process
+from audio_text import main as audio_main
 
 # 配置日志系统，设置日志级别为INFO，并定义日志格式
 # 格式包含：时间戳、日志级别和日志消息
@@ -43,12 +45,16 @@ def analyze_danmu():
 
 def main():
     """
-    主函数，用于启动Flask Web服务器。
-    配置服务器在0.0.0.0上运行，允许局域网内其他设备访问
-    启用调试模式，方便开发过程中实时查看错误和自动重载
+    主函数，用于启动Flask Web服务器和音频文件监控服务。
     """
+    # 创建一个新进程来运行音频文件监控服务
+    # 这样可以确保它与Flask服务器并行运行，互不干扰
+    audio_process = Process(target=audio_main)
+    audio_process.start()
+    
     print("启动Web服务器，请通过 http://127.0.0.1:5000 访问")
     # 在 0.0.0.0 上运行，允许局域网访问
+    # 注意：在生产环境中，应禁用debug模式
     app.run(host='0.0.0.0', port=5000, debug=True)
 
 if __name__ == '__main__':

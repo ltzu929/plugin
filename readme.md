@@ -23,15 +23,15 @@
 
 ## 系统架构
 
-本项目采用前后端分离架构：
-- **后端**: Python Flask 服务器，提供 API 接口
-- **前端**: Vue.js 开发的单页应用，提供用户界面
+本项目为纯后端服务，提供以下核心功能：
+- **弹幕分析API**: 一个Flask Web服务器，提供用于Bilibili弹幕分析的API接口。
+- **音频监控服务**: 一个在后台运行的独立服务，用于监控文件夹并自动将音频转换为字幕。
 
 ## 文件结构
 
 ```
 .
-├── main.py         # 主程序脚本，Flask服务器入口
+├── main.py         # 主程序入口，同时启动Web服务器和音频监控服务
 ├── danmu.py        # Bilibili 弹幕获取与分析模块
 ├── audio-text.py   # 音频转字幕模块
 ├── config.ini      # 配置文件，需要您手动创建和填写
@@ -87,7 +87,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-脚本启动后，会同时启动Flask服务器，提供弹幕分析API和音频监控服务。
+脚本启动后，会同时启动Flask服务器和音频监控服务。
 
 ### 4. 开始使用
 
@@ -107,13 +107,16 @@ python main.py
 
 **对于 Bilibili 弹幕获取与分析功能：**
 
-1. 在浏览器中访问 `http://localhost:5000` 打开前端界面
-2. 在输入框中粘贴Bilibili视频链接（支持各种格式的B站链接）
-3. 点击"分析"按钮，等待后台处理
-4. 查看生成的弹幕分布图和高能时刻标记
-5. 浏览热词统计，了解观众关注点
+您可以通过API客户端（如 Postman、curl 或您自己的脚本）向 `http://localhost:5000/api/danmu` 发送POST请求来使用此功能。
 
-当前版本的 `danmu.py` 脚本需要修改代码以指定要获取弹幕的视频链接。未来的版本可能会通过 API 或其他方式进行交互。
+请求体应为JSON格式，包含Bilibili视频的URL，例如：
+```json
+{
+    "url": "https://www.bilibili.com/video/BV1fx411j7a4"
+}
+```
+
+服务器将返回一个包含弹幕分析结果的JSON响应，包括高能时刻、热词统计等。
 
 ## 注意事项
 
