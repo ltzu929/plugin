@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from danmu import main_analysis
 import logging
@@ -9,11 +9,25 @@ from audio_text import main as audio_main
 # 格式包含：时间戳、日志级别和日志消息
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# 初始化 Flask 应用实例
-app = Flask(__name__)
+# 初始化 Flask 应用实例，并指定静态文件目录
+app = Flask(__name__, static_folder='danmu-analysis-frontend')
 # 启用CORS（跨域资源共享），允许前端（Vue.js）从不同域名/端口访问后端API
 # 这对于前后端分离的开发模式是必要的
 CORS(app)
+
+@app.route('/')
+def serve_index():
+    """
+    提供前端主页 (index.html)。
+    """
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/<path:path>')
+def serve_static_files(path):
+    """
+    提供前端静态文件（如 CSS, JS, images）。
+    """
+    return send_from_directory(app.static_folder, path)
 
 @app.route('/api/danmu', methods=['POST'])
 def analyze_danmu():
@@ -55,7 +69,7 @@ def main():
     print("启动Web服务器，请通过 http://127.0.0.1:5000 访问")
     # 在 0.0.0.0 上运行，允许局域网访问
     # 注意：在生产环境中，应禁用debug模式
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=True)
 
 if __name__ == '__main__':
     main()

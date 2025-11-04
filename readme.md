@@ -23,7 +23,9 @@
 
 ## 系统架构
 
-本项目为纯后端服务，提供以下核心功能：
+本项目为前后端分离架构：
+- **前端**: 提供用户友好的 Web 界面，用于输入 Bilibili 视频链接并展示分析结果。
+- **后端**: 提供 RESTful API 服务，处理弹幕分析和音频转字幕任务。
 - **弹幕分析API**: 一个Flask Web服务器，提供用于Bilibili弹幕分析的API接口。
 - **音频监控服务**: 一个在后台运行的独立服务，用于监控文件夹并自动将音频转换为字幕。
 
@@ -31,12 +33,18 @@
 
 ```
 .
-├── main.py         # 主程序入口，同时启动Web服务器和音频监控服务
-├── danmu.py        # Bilibili 弹幕获取与分析模块
-├── audio_text.py   # 音频转字幕模块
-├── config.ini      # 配置文件，需要您手动创建和填写
-├── requirements.txt# 项目依赖文件
-└── readme.md       # 本说明文件
+├── main.py                      # 主程序入口，同时启动Web服务器和音频监控服务
+├── danmu.py                     # Bilibili 弹幕获取与分析模块
+├── audio_text.py                # 音频转字幕模块
+├── config.ini                   # 配置文件，需要您手动创建和填写
+├── requirements.txt             # 项目依赖文件
+├── readme.md                    # 本说明文件
+└── danmu-analysis-frontend/     # 前端文件目录
+    ├── index.html               # 前端主页面
+    ├── css/
+    │   └── styles.css           # 前端样式文件
+    └── js/
+        └── main.js              # 前端JavaScript逻辑
 ```
 
 ## 使用步骤
@@ -90,6 +98,17 @@ python main.py
 
 ### 4. 开始使用
 
+**对于 Bilibili 弹幕分析功能：**
+
+1.  打开您的浏览器，访问 `http://localhost:5001`。
+2.  在页面上的输入框中粘贴您想要分析的 Bilibili 视频链接（例如：`https://www.bilibili.com/video/BV1fx411j7a4`）。
+3.  点击“开始分析”按钮，等待分析完成。
+4.  分析结果将在页面上展示，包括：
+    *   弹幕总数、分析耗时和视频时长。
+    *   弹幕时间分布图表。
+    *   高能时刻（弹幕密集时段）。
+    *   热词分析（词云和热门词汇列表）。
+
 **对于音频转字幕功能：**
 
 将一个或多个支持的音频文件（例如 `my_audio.mp3`）复制或移动到您在 `config.ini` 中设置的 `WatchPath` 文件夹中。
@@ -103,19 +122,6 @@ python main.py
 6.  从 COS 中删除该音频文件。
 
 整个过程全自动，您只需关注最终生成的字幕文件即可。
-
-**对于 Bilibili 弹幕获取与分析功能：**
-
-您可以通过API客户端（如 Postman、curl 或您自己的脚本）向 `http://localhost:5000/api/danmu` 发送POST请求来使用此功能。
-
-请求体应为JSON格式，包含Bilibili视频的URL，例如：
-```json
-{
-    "url": "https://www.bilibili.com/video/BV1fx411j7a4"
-}
-```
-
-服务器将返回一个包含弹幕分析结果的JSON响应，包括高能时刻、热词统计等。
 
 ## 注意事项
 
