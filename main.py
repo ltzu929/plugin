@@ -69,7 +69,7 @@ def main():
     print("启动Web服务器，请通过 http://127.0.0.1:5000 访问")
     # 在 0.0.0.0 上运行，允许局域网访问
     # 注意：在生产环境中，应禁用debug模式
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=True, use_reloader=False)
 
 if __name__ == '__main__':
     main()

@@ -1,7 +1,7 @@
-requests
-xmltodict
-watchdog
-tencentcloud-sdk-python
-cos-python-sdk-v5
-flask
-flask-cors
+requests==2.28.1
+xmltodict==0.13.0
+tencentcloud-sdk-python==3.0.837
+cos-python-sdk-v5==1.9.15
+flask==2.2.2
+flask-cors==3.0.10
+Werkzeug==2.2.2
