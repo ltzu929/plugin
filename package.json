@@ -14,7 +14,10 @@
     "test:coverage": "vitest --coverage",
     "typecheck": "tsc --noEmit",
     "electron:dev": "concurrently \"npm run server\" \"vite\" \"electron .\"",
-    "electron:build": "vite build && electron-builder -w nsis"
+    "electron:build": "vite build && electron-builder -w nsis",
+    "release:patch": "npm version patch -m \"chore: release %s\"",
+    "release:minor": "npm version minor -m \"chore: release %s\"",
+    "release:major": "npm version major -m \"chore: release %s\""
   },
   "keywords": [
     "bilibili",
@@ -30,12 +33,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/bilibili-danmaku-analyzer.git"
+    "url": "https://github.com/ltzu929/plugin.git"
   },
   "bugs": {
-    "url": "https://github.com/your-username/bilibili-danmaku-analyzer/issues"
+    "url": "https://github.com/ltzu929/plugin/issues"
   },
-  "homepage": "https://github.com/your-username/bilibili-danmaku-analyzer#readme",
+  "homepage": "https://github.com/ltzu929/plugin#readme",
   "type": "module",
   "main": "electron/main.cjs",
   "dependencies": {
@@ -90,7 +93,7 @@
       {
         "provider": "github",
         "owner": "ltzu929",
-        "repo": "bilibili-xml"
+        "repo": "plugin"
       }
     ]
   },

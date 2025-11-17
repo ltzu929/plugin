@@ -1,6 +1,14 @@
 node_modules/
 dist/
 data/
-.env
+.cache/
+.vite/
+coverage/
 *.log
+*.local
 .DS_Store
+latest.yml
+*.exe
+*.msi
+win-unpacked/
+config.ini

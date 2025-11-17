@@ -4,6 +4,12 @@ const { autoUpdater } = require('electron-updater')
 
 require(path.join(__dirname, '../api/server.js'))
 
+function sendToAll(channel, payload) {
+  BrowserWindow.getAllWindows().forEach(win => {
+    try { win.webContents.send(channel, payload) } catch {}
+  })
+}
+
 function createWindow () {
   const win = new BrowserWindow({
     width: 1200,
@@ -27,12 +33,6 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
-
-function sendToAll(channel, payload) {
-  BrowserWindow.getAllWindows().forEach(win => {
-    try { win.webContents.send(channel, payload) } catch {}
-  })
-}
 
 autoUpdater.on('checking-for-update', () => sendToAll('update-checking', {}))
 autoUpdater.on('update-available', info => sendToAll('update-available', info))
