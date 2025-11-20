@@ -690,7 +690,7 @@ app.delete('/api/history', async (req, res) => {
 // 解析UP主合集链接并获取最新5个视频
 app.post('/api/up-series', async (req, res) => {
   try {
-    const { url } = req.body;
+    const { url, page, pageSize, excludeBvids } = req.body || {};
     if (!url || typeof url !== 'string') {
       return res.status(400).json({ error: '缺少合集链接' });
     }
@@ -700,8 +700,10 @@ app.post('/api/up-series', async (req, res) => {
     }
     const mid = match[1];
     const sid = match[2];
+    const pn = (typeof page === 'number' && page > 0) ? page : 1;
+    const ps = (typeof pageSize === 'number' && pageSize > 0 && pageSize <= 50) ? pageSize : 5;
 
-    const cacheKey = `series-${mid}-${sid}`;
+    const cacheKey = `series-${mid}-${sid}-pn${pn}-ps${ps}`;
     const now = Date.now();
     if (upSeriesCache[cacheKey] && now - upSeriesCache[cacheKey].ts < 5 * 60 * 1000) {
       const cached = upSeriesCache[cacheKey].data;
@@ -712,15 +714,35 @@ app.post('/api/up-series', async (req, res) => {
     }
 
     let archives = [];
+    let totalCount = 0;
+    let hasMore = false;
+    const exclude = Array.isArray(excludeBvids) ? new Set(excludeBvids.map(String)) : new Set();
     try {
-      const apiUrl = `https://api.bilibili.com/x/series/archives?mid=${mid}&series_id=${sid}&only_normal=true&sort=desc&pn=1&ps=5`;
-      const resp = await axios.get(apiUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-      if (resp.data && resp.data.code === 0 && resp.data.data && resp.data.data.archives) {
-        archives = resp.data.data.archives;
+      const collect = [];
+      const psPage = Math.max(ps, 20);
+      for (let i = pn; i < pn + 10; i++) {
+        const apiUrl = `https://api.bilibili.com/x/series/archives?mid=${mid}&series_id=${sid}&only_normal=true&sort=desc&pn=${i}&ps=${psPage}`;
+        const resp = await axios.get(apiUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': `https://space.bilibili.com/${mid}/lists/${sid}?type=series` } });
+        if (resp.data && resp.data.code === 0 && resp.data.data) {
+          const received = resp.data.data.archives || [];
+          const p = resp.data.data.page;
+          if (p) totalCount = Number(p.count || p.total || totalCount);
+          if (!Array.isArray(received) || received.length === 0) break;
+          for (const a of received) {
+            const id = String(a.bvid);
+            if (!exclude.has(id) && !collect.some(x => x.bvid === id)) {
+              collect.push(a);
+            }
+          }
+          if (received.length < psPage) break;
+        } else {
+          break;
+        }
       }
+      archives = collect;
     } catch {}
 
-    if (!archives || archives.length === 0) {
+    if (!archives || archives.length < ps) {
       try {
         const pageUrl = `https://space.bilibili.com/${mid}/lists/${sid}?type=series`;
         const htmlResp = await axios.get(pageUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -728,10 +750,14 @@ app.post('/api/up-series', async (req, res) => {
         const items = [];
         const regex = /<a\s+href="\/video\/([A-Za-z0-9]+)"[\s\S]*?title="([^"]+)"[\s\S]*?data-src="(https?:\/\/[^"]+)"/g;
         let m;
-        while ((m = regex.exec(html)) && items.length < 5) {
+        while ((m = regex.exec(html))) {
           items.push({ bvid: m[1], title: m[2], pic: m[3] });
         }
-        archives = items.map(it => ({ bvid: it.bvid, title: it.title, pic: it.pic, stat: { view: 0 }, pubdate: Math.floor(Date.now()/1000), duration: 0 }));
+        totalCount = items.length;
+        const filtered = items.filter(it => !exclude.has(String(it.bvid)));
+        const offset = exclude.size; // 已经加载的数量
+        const slice = filtered.slice(offset, offset + ps);
+        archives = slice.map(it => ({ bvid: it.bvid, title: it.title, pic: it.pic, stat: { view: 0 }, pubdate: Math.floor(Date.now()/1000), duration: 0 }));
       } catch {}
     }
 
@@ -761,7 +787,7 @@ app.post('/api/up-series', async (req, res) => {
       return s;
     };
 
-    const list = (archives || []).slice(0, 5).map(a => ({
+    const list = (archives || []).map(a => ({
       bvid: a.bvid,
       title: a.title || '',
       cover: normalize(a.pic || ''),
@@ -781,7 +807,20 @@ app.post('/api/up-series', async (req, res) => {
       } catch {}
     }
 
-    const data = { mid, sid, upName, upFace, list, fetchedAt: new Date().toISOString() };
+    if (totalCount > 0) {
+      hasMore = totalCount > (exclude.size + archives.length);
+    } else if (Array.isArray(archives)) {
+      hasMore = archives.length === ps;
+      if (!hasMore) {
+        try {
+          const probeUrl = `https://api.bilibili.com/x/series/archives?mid=${mid}&series_id=${sid}&only_normal=true&sort=desc&pn=${pn + 1}&ps=1`;
+          const probeResp = await axios.get(probeUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': `https://space.bilibili.com/${mid}/lists/${sid}?type=series` } });
+          const nextArr = probeResp.data && probeResp.data.data && probeResp.data.data.archives ? probeResp.data.data.archives : [];
+          hasMore = Array.isArray(nextArr) && nextArr.length > 0;
+        } catch {}
+      }
+    }
+    const data = { mid, sid, upName, upFace, list, page: pn, pageSize: ps, hasMore, fetchedAt: new Date().toISOString() };
     upSeriesCache[cacheKey] = { data, ts: now };
     res.json(data);
   } catch (e) {
