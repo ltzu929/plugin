@@ -62,7 +62,13 @@ export default function MainApp() {
   };
 
   const handleTabChange = (tab: string) => {
-    setActiveTab(tab as ActiveTab);
+    const t = tab as ActiveTab;
+    setActiveTab(t);
+    if (t !== 'danmaku') {
+      setAnalysisData(null);
+      setSelectedVideo(null);
+      setOriginTab(null);
+    }
   };
 
   return (

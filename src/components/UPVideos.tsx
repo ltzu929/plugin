@@ -28,7 +28,7 @@ export default function UPVideos({ onVideoSelect, initialSeriesUrl }: UPVideosPr
   const [error, setError] = useState('');
   const [videos, setVideos] = useState<Video[]>([]);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(12);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [hasMore, setHasMore] = useState<boolean>(false);
   const [loadingMore, setLoadingMore] = useState<boolean>(false);
   const [noMore, setNoMore] = useState<boolean>(false);
@@ -79,6 +79,14 @@ export default function UPVideos({ onVideoSelect, initialSeriesUrl }: UPVideosPr
 
   const handleRefresh = async () => {
     if (!seriesUrl.trim()) return;
+    const prefix = `${seriesUrl.trim()}::`;
+    for (const k of Array.from(cache.keys())) {
+      if (k.startsWith(prefix)) cache.delete(k);
+    }
+    setCurrentPage(1);
+    setNoMore(false);
+    setHasMore(false);
+    setVideos([]);
     await handleSearch(seriesUrl, true);
   };
 
@@ -126,7 +134,9 @@ export default function UPVideos({ onVideoSelect, initialSeriesUrl }: UPVideosPr
       const key = `${url}::1::${pageSize}`;
       if (!force && cache.has(key)) {
         const data = cache.get(key);
-        setVideos(data.list.map((v: any) => ({
+        const listArr = Array.isArray(data.list) ? data.list : [];
+        const firstSlice = listArr.slice(0, pageSize);
+        setVideos(firstSlice.map((v: any) => ({
           title: v.title,
           cover: v.cover,
           duration: v.duration ? `${Math.floor(v.duration/60)}:${(v.duration%60).toString().padStart(2,'0')}` : '',
@@ -135,7 +145,7 @@ export default function UPVideos({ onVideoSelect, initialSeriesUrl }: UPVideosPr
           url: v.url,
           bvid: v.bvid,
         })));
-        setHasMore(Boolean(data.hasMore));
+        setHasMore(Boolean(data.hasMore) || listArr.length > firstSlice.length);
         saveHistory(data.upName || '', data.upFace || '', url);
         return;
       }
@@ -150,7 +160,9 @@ export default function UPVideos({ onVideoSelect, initialSeriesUrl }: UPVideosPr
 
       cache.set(key, data);
       saveHistory(data.upName || '', data.upFace || '', url);
-      setVideos((data.list || []).map((v: any) => ({
+      const listArr = Array.isArray(data.list) ? data.list : [];
+      const firstSlice = listArr.slice(0, pageSize);
+      setVideos(firstSlice.map((v: any) => ({
         title: v.title,
         cover: v.cover,
         duration: v.duration ? `${Math.floor(v.duration/60)}:${(v.duration%60).toString().padStart(2,'0')}` : '',
@@ -159,7 +171,7 @@ export default function UPVideos({ onVideoSelect, initialSeriesUrl }: UPVideosPr
         url: v.url,
         bvid: v.bvid,
       })));
-      setHasMore(Boolean(data.hasMore));
+      setHasMore(Boolean(data.hasMore) || listArr.length > firstSlice.length);
       setCurrentPage(1);
     } catch (err) {
       setError(err instanceof Error ? err.message : '获取视频列表失败');

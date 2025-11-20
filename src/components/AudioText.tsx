@@ -1,10 +1,11 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Label } from '@/components/ui/label';
 import { Loader2, Upload, FileAudio, Download } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 
 interface AudioTextProps {
   onTextGenerated: (text: string) => void;
@@ -16,6 +17,47 @@ export default function AudioText({ onTextGenerated }: AudioTextProps) {
   const [error, setError] = useState('');
   const [result, setResult] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [watchBusy, setWatchBusy] = useState(false);
+  const [watchStatus, setWatchStatus] = useState<{ running: boolean; pid?: number; logs: string[] }>({ running: false, pid: undefined, logs: [] });
+  const [logsRef, setLogsRef] = useState<HTMLDivElement | null>(null);
+  const [watchPath, setWatchPath] = useState<string>('');
+  const [audioFormats, setAudioFormats] = useState<string>('*.wav');
+  const [pythonPath, setPythonPath] = useState<string>('python');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const resp = await fetch('/api/asr-config');
+        if (resp.ok) {
+          const c = await resp.json();
+          setWatchPath(c.watchPath || './watch');
+          setAudioFormats(c.audioFormats || '*.wav');
+        }
+      } catch {}
+    })();
+  }, []);
+
+  useEffect(() => {
+    let timer: any = null;
+    const poll = async () => {
+      try {
+        const resp = await fetch('/api/audio-watch/status');
+        if (resp.ok) {
+          const s = await resp.json();
+          setWatchStatus({ running: !!s.running, pid: s.pid, logs: Array.isArray(s.logs) ? s.logs : [] });
+        }
+      } catch {}
+    };
+    poll();
+    timer = setInterval(poll, 3000);
+    return () => { if (timer) clearInterval(timer); };
+  }, []);
+
+  useEffect(() => {
+    if (logsRef) {
+      logsRef.scrollTop = logsRef.scrollHeight;
+    }
+  }, [watchStatus.logs, logsRef]);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -54,8 +96,9 @@ export default function AudioText({ onTextGenerated }: AudioTextProps) {
       }
 
       const data = await response.json();
-      setResult(data.text);
-      onTextGenerated(data.text);
+      const srt = data.srt || '';
+      setResult(srt);
+      onTextGenerated(srt);
     } catch (err) {
       setError(err instanceof Error ? err.message : '转换过程中出现错误');
     } finally {
@@ -69,12 +112,47 @@ export default function AudioText({ onTextGenerated }: AudioTextProps) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${selectedFile?.name.replace(/\.[^/.]+$/, '') || 'audio'}.txt`;
+      a.download = `${selectedFile?.name.replace(/\.[^/.]+$/, '') || 'audio'}.srt`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }
+  };
+
+  const startWatch = async () => {
+    setWatchBusy(true);
+    try {
+      await fetch('/api/audio-watch/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pythonPath, watchPath, audioFormats }) });
+    } catch {}
+    setWatchBusy(false);
+  };
+
+  const stopWatch = async () => {
+    setWatchBusy(true);
+    try {
+      await fetch('/api/audio-watch/stop', { method: 'POST' });
+    } catch {}
+    setWatchBusy(false);
+  };
+
+  const clearLogs = async () => {
+    try { await fetch('/api/audio-watch/clear-logs', { method: 'POST' }); } catch {}
+    setWatchStatus(prev => ({ ...prev, logs: [] }));
+  };
+
+  const downloadLogs = () => {
+    const text = (watchStatus.logs || []).join('\n');
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    a.download = `audio-watch-logs-${ts}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -168,6 +246,55 @@ export default function AudioText({ onTextGenerated }: AudioTextProps) {
             <p>• 支持MP3、WAV、M4A等常见音频格式</p>
             <p>• 自动识别中文语音并转换为文字</p>
             <p>• 支持下载转换后的文本文件</p>
+          </div>
+
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <Label>本地监控控制</Label>
+              <div className="flex items-center gap-2">
+                <Button onClick={startWatch} disabled={watchBusy} className="bg-green-600 hover:bg-green-700 text-white">启动监控</Button>
+                <Button onClick={stopWatch} disabled={watchBusy} variant="destructive">停止监控</Button>
+                <span className="text-sm text-gray-600">状态：{watchStatus.running ? `运行中 (PID: ${watchStatus.pid})` : '已停止'}</span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="watchPathLocal">监控目录</Label>
+              <div className="flex items-center gap-2">
+                <Input id="watchPathLocal" type="text" value={watchPath} onChange={(e) => setWatchPath(e.target.value)} />
+                <Button variant="secondary" onClick={async () => {
+                  try {
+                    const api = (window as any).dialogs;
+                    if (api && typeof api.chooseDir === 'function') {
+                      const r = await api.chooseDir();
+                      if (r && r.path) setWatchPath(r.path);
+                      return;
+                    }
+                    if ((window as any).showDirectoryPicker) {
+                      alert('当前为浏览器模式，无法获取系统路径，请在输入框中手动填写或使用桌面应用进行选择');
+                      return;
+                    }
+                    alert('当前环境不支持目录选择，请在桌面应用中使用或手动填写路径');
+                  } catch {}
+                }}>选择目录</Button>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="audioFormatsLocal">音频格式</Label>
+              <Input id="audioFormatsLocal" type="text" placeholder="*.wav,*.mp3" value={audioFormats} onChange={(e) => setAudioFormats(e.target.value)} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>监控日志</Label>
+              <div ref={setLogsRef} className="h-32 overflow-auto rounded-md border border-input bg-background p-2 text-xs text-gray-700 whitespace-pre-wrap">
+                {(watchStatus.logs || []).join('\n') || '暂无日志'}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button onClick={downloadLogs} variant="outline">下载日志</Button>
+                <Button onClick={clearLogs} variant="secondary">清空日志</Button>
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>

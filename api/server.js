@@ -5,6 +5,11 @@ import xml2js from 'xml2js';
 import cron from 'node-cron';
 import fs from 'fs/promises';
 import path from 'path';
+import os from 'os';
+import multer from 'multer';
+import COS from 'cos-nodejs-sdk-v5';
+import tencentcloud from 'tencentcloud-sdk-nodejs';
+import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 
@@ -16,12 +21,16 @@ const PORT = 3001;
 
 app.use(cors());
 app.use(express.json());
+const upload = multer();
 
 // 存储弹幕数据的简单数据库
 let danmakuData = {};
 let upSeriesCache = {};
 const historyDir = path.join(process.cwd(), 'data');
 const historyFile = path.join(historyDir, 'up_history.json');
+
+let audioWatchProc = null;
+let audioWatchLog = [];
 
 async function readHistory() {
   try {
@@ -46,6 +55,44 @@ function normalizeCoverUrl(u) {
   if (s.startsWith('//')) return 'https:' + s;
   if (s.startsWith('http://')) return s.replace('http://', 'https://');
   return s;
+}
+
+function parseIni(text) {
+  const out = {};
+  let section = '';
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith(';')) continue;
+    const mSec = line.match(/^\[(.+?)\]$/);
+    if (mSec) { section = mSec[1].toLowerCase(); if (!out[section]) out[section] = {}; continue; }
+    const idx = line.indexOf('=');
+    if (idx > 0) {
+      const k = line.slice(0, idx).trim();
+      const v = line.slice(idx + 1).trim();
+      if (!out[section]) out[section] = {};
+      out[section][k] = v;
+    }
+  }
+  return out;
+}
+
+async function getASRConfig() {
+  let ini = {};
+  try {
+    const p = path.join(process.cwd(), 'config.ini');
+    const s = await fs.readFile(p, 'utf-8');
+    ini = parseIni(s);
+  } catch {}
+  const env = process.env;
+  const auth = ini.auth || ini.TencentCloud || {};
+  const cos = ini.cos || {};
+  const asr = ini.asr || {};
+  const SecretId = env.TC_SECRET_ID || auth.SecretId || '';
+  const SecretKey = env.TC_SECRET_KEY || auth.SecretKey || '';
+  const Region = env.TC_REGION || auth.Region || cos.Region || asr.Region || '';
+  const Bucket = env.TC_COS_BUCKET || auth.Bucket || cos.Bucket || '';
+  const EngineModelType = env.TC_ASR_ENGINE || asr.EngineModelType || '16k_zh';
+  return { SecretId, SecretKey, Region, Bucket, EngineModelType };
 }
 
 /**
@@ -657,6 +704,221 @@ app.get('/api/cover', async (req, res) => {
   }
 });
 
+app.get('/api/system/downloads-path', async (req, res) => {
+  try {
+    const home = os.homedir();
+    const downloads = path.join(home, 'Downloads');
+    res.json({ path: downloads });
+  } catch (e) {
+    res.status(500).json({ error: 'failed to get downloads path' });
+  }
+});
+
+app.post('/api/save-cover', async (req, res) => {
+  try {
+    const { url, bvid, dir } = req.body || {};
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: 'missing url' });
+    const targetDir = (typeof dir === 'string' && dir.trim()) ? dir.trim() : path.join(os.homedir(), 'Downloads');
+    await fs.mkdir(targetDir, { recursive: true });
+    const response = await axios.get(url, { responseType: 'arraybuffer', headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const ct = (response.headers && (response.headers['content-type'] || response.headers['Content-Type'])) || '';
+    let ext = 'jpg';
+    if (ct.includes('png')) ext = 'png'; else if (ct.includes('webp')) ext = 'webp'; else if (ct.includes('jpeg')) ext = 'jpg';
+    else {
+      const ex = (url.split('.').pop() || '').toLowerCase();
+      if (['png', 'jpg', 'jpeg', 'webp'].includes(ex)) ext = ex;
+    }
+    const filename = `cover_${String(bvid || Date.now())}.${ext}`;
+    const filePath = path.join(targetDir, filename);
+    await fs.writeFile(filePath, response.data);
+    res.json({ ok: true, path: filePath });
+  } catch (e) {
+    res.status(500).json({ error: 'save cover failed' });
+  }
+});
+
+app.post('/api/audio-to-text', upload.single('audio'), async (req, res) => {
+  try {
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'missing audio' });
+    const cfg = await getASRConfig();
+    if (!cfg.SecretId || !cfg.SecretKey || !cfg.Region || !cfg.Bucket) return res.status(400).json({ error: 'missing credentials' });
+    const cos = new COS({ SecretId: cfg.SecretId, SecretKey: cfg.SecretKey });
+    const key = `asr/${Date.now()}_${String(file.originalname || 'audio').replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+    await new Promise((resolve, reject) => {
+      cos.putObject({ Bucket: cfg.Bucket, Region: cfg.Region, Key: key, StorageClass: 'STANDARD', Body: file.buffer }, (err, data) => {
+        if (err) reject(err); else resolve(data);
+      });
+    });
+    const signed = cos.getObjectUrl({ Bucket: cfg.Bucket, Region: cfg.Region, Key: key, Sign: true, Expires: 3600 });
+    const AsrClient = tencentcloud.asr.v20190614.Client;
+    const client = new AsrClient({ credential: { secretId: cfg.SecretId, secretKey: cfg.SecretKey }, region: cfg.Region, profile: { httpProfile: { endpoint: 'asr.tencentcloudapi.com' } } });
+    const create = await client.CreateRecTask({ EngineModelType: cfg.EngineModelType, ChannelNum: 1, ResTextFormat: 3, SourceType: 0, Url: signed });
+    const taskId = create.Data.TaskId;
+    let resultDetail = null;
+    const started = Date.now();
+    while (Date.now() - started < 10 * 60 * 1000) {
+      const st = await client.DescribeTaskStatus({ TaskId: taskId });
+      const s = st.Data.StatusStr || st.Data.Status || '';
+      if (String(s).toLowerCase() === 'success') { resultDetail = st.Data.ResultDetail || []; break; }
+      if (String(s).toLowerCase() === 'failed') { break; }
+      await new Promise(r => setTimeout(r, 5000));
+    }
+    try { cos.deleteObject({ Bucket: cfg.Bucket, Region: cfg.Region, Key: key }, () => {}); } catch {}
+    if (!resultDetail || !Array.isArray(resultDetail) || resultDetail.length === 0) return res.status(500).json({ error: 'recognition failed' });
+    const fmt = (ms) => {
+      const total = Math.floor(Number(ms) || 0);
+      const hh = Math.floor(total / 3600000);
+      const mm = Math.floor((total % 3600000) / 60000);
+      const ss = Math.floor((total % 60000) / 1000);
+      const ms3 = Math.floor(total % 1000);
+      return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')},${String(ms3).padStart(3, '0')}`;
+    };
+    let out = '';
+    for (let i = 0; i < resultDetail.length; i++) {
+      const it = resultDetail[i];
+      const start = fmt(it.StartMs);
+      const end = fmt(it.EndMs);
+      const text = String(it.FinalSentence || '').replace(/[，。,.]/g, '');
+      out += `${i + 1}\n${start} --> ${end}\n${text}\n\n`;
+    }
+    res.json({ srt: out });
+  } catch (e) {
+    res.status(500).json({ error: 'audio to text failed' });
+  }
+});
+
+app.post('/api/audio-watch/start', async (req, res) => {
+  try {
+    if (audioWatchProc && !audioWatchProc.killed) {
+      return res.json({ running: true, pid: audioWatchProc.pid });
+    }
+    const { pythonPath = 'python', watchPath, audioFormats } = req.body || {};
+    const script = path.join(process.cwd(), 'audio_text.py');
+    try {
+      await fs.access(script);
+    } catch {
+      return res.status(400).json({ error: 'audio_text.py not found' });
+    }
+    if (watchPath || audioFormats) {
+      try {
+        const p = path.join(process.cwd(), 'config.ini');
+        let text = '';
+        try { text = await fs.readFile(p, 'utf-8'); } catch {}
+        const ini = parseIni(text);
+        ini.Watch = ini.Watch || {};
+        if (watchPath) ini.Watch.WatchPath = watchPath;
+        if (audioFormats) ini.Watch.AudioFormats = audioFormats;
+        const lines = [];
+        lines.push('[TencentCloud]');
+        const auth = ini.TencentCloud || ini.auth || {};
+        lines.push(`SecretId=${auth.SecretId || ''}`);
+        lines.push(`SecretKey=${auth.SecretKey || ''}`);
+        lines.push(`Region=${auth.Region || (ini.asr && ini.asr.Region) || ''}`);
+        lines.push(`Bucket=${auth.Bucket || ''}`);
+        lines.push('');
+        lines.push('[asr]');
+        const asr = ini.asr || {};
+        lines.push(`EngineModelType=${asr.EngineModelType || '16k_zh'}`);
+        lines.push('');
+        lines.push('[Watch]');
+        const watch = ini.Watch || {};
+        lines.push(`WatchPath=${watch.WatchPath || './watch'}`);
+        lines.push(`AudioFormats=${watch.AudioFormats || '*.wav'}`);
+        await fs.writeFile(p, lines.join('\n'), 'utf-8');
+      } catch {}
+    }
+    audioWatchLog = [];
+    audioWatchProc = spawn(pythonPath, [script], { cwd: process.cwd(), env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    audioWatchProc.stdout.on('data', (d) => {
+      const s = d.toString();
+      audioWatchLog.push(...s.split(/\r?\n/).filter(Boolean));
+      if (audioWatchLog.length > 200) audioWatchLog = audioWatchLog.slice(-200);
+    });
+    audioWatchProc.stderr.on('data', (d) => {
+      const s = d.toString();
+      audioWatchLog.push(...s.split(/\r?\n/).filter(Boolean));
+      if (audioWatchLog.length > 200) audioWatchLog = audioWatchLog.slice(-200);
+    });
+    audioWatchProc.on('exit', () => {
+      audioWatchProc = null;
+    });
+    res.json({ running: true, pid: audioWatchProc.pid });
+  } catch {
+    res.status(500).json({ error: 'start watch failed' });
+  }
+});
+
+app.post('/api/audio-watch/stop', async (req, res) => {
+  try {
+    if (audioWatchProc && !audioWatchProc.killed) {
+      try { audioWatchProc.kill(); } catch {}
+      audioWatchProc = null;
+    }
+    res.json({ running: false });
+  } catch {
+    res.status(500).json({ error: 'stop watch failed' });
+  }
+});
+
+app.get('/api/audio-watch/status', async (req, res) => {
+  res.json({ running: !!(audioWatchProc && !audioWatchProc.killed), pid: audioWatchProc ? audioWatchProc.pid : undefined, logs: audioWatchLog.slice(-50) });
+});
+
+app.post('/api/audio-watch/clear-logs', async (req, res) => {
+  audioWatchLog = [];
+  res.json({ ok: true });
+});
+
+app.get('/api/asr-config', async (req, res) => {
+  try {
+    const cfg = await getASRConfig();
+    let ini = {};
+    try {
+      const p = path.join(process.cwd(), 'config.ini');
+      const s = await fs.readFile(p, 'utf-8');
+      ini = parseIni(s);
+    } catch {}
+    const watch = ini.watch || ini.Watch || {};
+    res.json({
+      secretId: cfg.SecretId,
+      secretKey: cfg.SecretKey,
+      region: cfg.Region,
+      bucket: cfg.Bucket,
+      engineModelType: cfg.EngineModelType,
+      watchPath: watch.WatchPath || '',
+      audioFormats: watch.AudioFormats || watch.AudioPattern || ''
+    });
+  } catch {
+    res.status(500).json({ error: 'read config failed' });
+  }
+});
+
+app.post('/api/asr-config', async (req, res) => {
+  try {
+    const { secretId = '', secretKey = '', region = '', bucket = '', engineModelType = '16k_zh', watchPath = './watch', audioFormats = '*.wav' } = req.body || {};
+    const lines = [];
+    lines.push('[TencentCloud]');
+    lines.push(`SecretId=${secretId}`);
+    lines.push(`SecretKey=${secretKey}`);
+    lines.push(`Region=${region}`);
+    lines.push(`Bucket=${bucket}`);
+    lines.push('');
+    lines.push('[asr]');
+    lines.push(`EngineModelType=${engineModelType}`);
+    lines.push('');
+    lines.push('[Watch]');
+    lines.push(`WatchPath=${watchPath}`);
+    lines.push(`AudioFormats=${audioFormats}`);
+    const content = lines.join('\n');
+    const p = path.join(process.cwd(), 'config.ini');
+    await fs.writeFile(p, content, 'utf-8');
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: 'write config failed' });
+  }
+});
+
 app.get('/api/history', async (req, res) => {
   const arr = await readHistory();
   arr.sort((a, b) => (b.time || 0) - (a.time || 0));
@@ -701,7 +963,7 @@ app.post('/api/up-series', async (req, res) => {
     const mid = match[1];
     const sid = match[2];
     const pn = (typeof page === 'number' && page > 0) ? page : 1;
-    const ps = (typeof pageSize === 'number' && pageSize > 0 && pageSize <= 50) ? pageSize : 5;
+    const ps = (typeof pageSize === 'number' && pageSize > 0 && pageSize <= 50) ? pageSize : 10;
 
     const cacheKey = `series-${mid}-${sid}-pn${pn}-ps${ps}`;
     const now = Date.now();
@@ -719,27 +981,23 @@ app.post('/api/up-series', async (req, res) => {
     const exclude = Array.isArray(excludeBvids) ? new Set(excludeBvids.map(String)) : new Set();
     try {
       const collect = [];
-      const psPage = Math.max(ps, 20);
-      for (let i = pn; i < pn + 10; i++) {
-        const apiUrl = `https://api.bilibili.com/x/series/archives?mid=${mid}&series_id=${sid}&only_normal=true&sort=desc&pn=${i}&ps=${psPage}`;
-        const resp = await axios.get(apiUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': `https://space.bilibili.com/${mid}/lists/${sid}?type=series` } });
-        if (resp.data && resp.data.code === 0 && resp.data.data) {
-          const received = resp.data.data.archives || [];
-          const p = resp.data.data.page;
-          if (p) totalCount = Number(p.count || p.total || totalCount);
-          if (!Array.isArray(received) || received.length === 0) break;
+      const psPage = ps;
+      const apiUrl = `https://api.bilibili.com/x/series/archives?mid=${mid}&series_id=${sid}&only_normal=true&sort=desc&pn=${pn}&ps=${psPage}`;
+      const resp = await axios.get(apiUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': `https://space.bilibili.com/${mid}/lists/${sid}?type=series` } });
+      if (resp.data && resp.data.code === 0 && resp.data.data) {
+        const received = resp.data.data.archives || [];
+        const p = resp.data.data.page;
+        if (p) totalCount = Number(p.count || p.total || totalCount);
+        if (Array.isArray(received) && received.length > 0) {
           for (const a of received) {
             const id = String(a.bvid);
             if (!exclude.has(id) && !collect.some(x => x.bvid === id)) {
               collect.push(a);
             }
           }
-          if (received.length < psPage) break;
-        } else {
-          break;
         }
       }
-      archives = collect;
+      archives = collect.slice(0, ps);
     } catch {}
 
     if (!archives || archives.length < ps) {
@@ -787,7 +1045,7 @@ app.post('/api/up-series', async (req, res) => {
       return s;
     };
 
-    const list = (archives || []).map(a => ({
+    const list = (archives || []).slice(0, ps).map(a => ({
       bvid: a.bvid,
       title: a.title || '',
       cover: normalize(a.pic || ''),

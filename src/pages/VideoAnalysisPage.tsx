@@ -94,6 +94,49 @@ export default function VideoAnalysisPage({ data, onReturnHome }: VideoAnalysisP
     }
   };
 
+  // 下载封面：通过后端封面代理接口获取二进制并触发浏览器下载
+  const handleDownloadCover = async () => {
+    try {
+      if (!cover) return;
+      let targetPath = '';
+      try {
+        const raw = localStorage.getItem('app_settings');
+        if (raw) {
+          const s = JSON.parse(raw);
+          if (typeof s.coverDownloadPath === 'string') targetPath = s.coverDownloadPath;
+        }
+      } catch {}
+
+      if (targetPath) {
+        const resp = await fetch(apiUrl('/api/save-cover'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: cover, bvid: data.bvid, dir: targetPath })
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          alert(`封面已保存到: ${json.path}`);
+          return;
+        }
+      }
+
+      const coverProxy = apiUrl(`/api/cover?url=${encodeURIComponent(cover)}`);
+      const resp = await fetch(coverProxy);
+      if (!resp.ok) return;
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const extMatch = (cover.split('.').pop() || '').toLowerCase();
+      const ext = ['png','jpg','jpeg','webp'].includes(extMatch) ? extMatch : 'jpg';
+      link.href = url;
+      link.download = `cover_${data.bvid || 'video'}.${ext}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch {}
+  };
+
   if (!data) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -178,11 +221,11 @@ export default function VideoAnalysisPage({ data, onReturnHome }: VideoAnalysisP
         <div className="bg-white/70 backdrop-blur-sm rounded-xl shadow-sm border border-white/50 p-4 mb-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
-              <div className="w-24 h-16 bg-gray-300 rounded-lg flex items-center justify-center overflow-hidden">
+              <div className="w-24 h-16 bg-gray-300 rounded-lg flex items-center justify-center overflow-hidden relative">
                 <img 
                   src={cover ? apiUrl(`/api/cover?url=${encodeURIComponent(cover)}`) : ''}
                   alt="封面"
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover cursor-pointer"
                   onError={(e: React.SyntheticEvent<HTMLImageElement>) => {
                     const target = e.target as HTMLImageElement;
                     target.style.display = 'none';
@@ -191,11 +234,21 @@ export default function VideoAnalysisPage({ data, onReturnHome }: VideoAnalysisP
                       nextSibling.style.display = 'flex';
                     }
                   }}
+                  onClick={handleDownloadCover}
                   style={{ display: cover ? 'block' : 'none' }}
                 />
                 <div className="w-full h-full bg-gray-200 rounded flex items-center justify-center" style={{ display: cover ? 'none' : 'flex' }}>
                   <span className="text-xs text-gray-500">封面</span>
                 </div>
+                {cover && (
+                  <button
+                    onClick={handleDownloadCover}
+                    title="下载封面"
+                    className="absolute top-1 right-1 bg-white/80 text-gray-700 hover:bg-white px-1.5 py-0.5 rounded shadow"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">{data.title}</h2>

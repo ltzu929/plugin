@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path = require('path')
 const { autoUpdater } = require('electron-updater')
 
@@ -47,4 +47,14 @@ ipcMain.on('update-check', () => {
 
 ipcMain.on('update-install', () => {
   autoUpdater.quitAndInstall()
+})
+
+ipcMain.handle('choose-dir', async () => {
+  try {
+    const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
+    if (result.canceled || !result.filePaths || !result.filePaths[0]) return { path: '' }
+    return { path: result.filePaths[0] }
+  } catch {
+    return { path: '' }
+  }
 })

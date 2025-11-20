@@ -5,3 +5,6 @@ contextBridge.exposeInMainWorld('updater', {
   install: () => ipcRenderer.send('update-install'),
   on: (event, cb) => ipcRenderer.on(`update-${event}`, (_e, payload) => cb && cb(payload))
 })
+contextBridge.exposeInMainWorld('dialogs', {
+  chooseDir: () => ipcRenderer.invoke('choose-dir')
+})

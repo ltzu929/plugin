@@ -33,3 +33,10 @@ ehthumbs.db
 builder-debug.yml
 builder-effective-config.yaml
 .trae/
+__pycache__/
+*.pyc
+.venv/
+.python-version
+*.srt
+*.tmp
+*.bak
